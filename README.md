@@ -5,6 +5,9 @@ A script that will monitor posts in your subreddit and check URLs for redirectio
 * PHP, tested and verified on 7.4.3 but it should work on earlier versions
 * php-curl
 
+## Disclaimer
+Due to the nature of the script, if configured improperly it could remove posts and issue bans on completely benign phrases. No warranty or protection of any kind is offered. It is up to you to configure the script so that you do not catch false positives. To check URLs without actioning on them, configure your blacklist and then set verbose to true, blacklist_remove to false, and blacklist_ban to false. Run the script and monitor the output until you have your blacklist settings configured well enough, and then re-enable blacklist_remove and blacklist_ban when you are confident your blacklist is configured correctly.
+
 ## Configuration
 You will need to create a moderator account for the script and create a Reddit app using that account. You can create this at https://ssl.reddit.com/prefs/apps/. See https://github.com/reddit-archive/reddit/wiki/OAuth2 for instructions.
 
