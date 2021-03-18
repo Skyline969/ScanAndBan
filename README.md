@@ -10,6 +10,8 @@ You will need to create a moderator account for the script and create a Reddit a
 
 Once you have your moderator account set up for your subreddit and you have your app's client ID, client secret, and name you're good to go! The redirect URL doesn't matter, we will not be using it.
 
+Action is taken on the redirected URL, not the original. If someone posts a URL to myredirector.com which redirects to someothersite.com which then redirects to mysketchysite.com, you would want to configure mysketchysite.com in the blacklist, not myredirector.com or someothersite.com. Due to the nature of regular expressions, you should ensure that you write your blacklist entries in such a way that you will not accidentally catch false positives, such as someone mentioning the blacklisted phrase in a self-post's title.
+
 The script supports the following configuration:
 
 * debug - If the script is failing for some reason, flip this to true to get a better idea of what is going on.
@@ -21,7 +23,7 @@ The script supports the following configuration:
 * app_name - The name of the app you created above.
 * app_id - The client ID of the app you created above.
 * app_secret - The client secret of the app you created above.
-* url_blacklist - An array of URLs/partial URLs you want to action on. These are processed as regular expressions, so by default if you just specify a domain such as "google.com" it will action on **ANY URL containing that anywhere in it. If you add a word to the blacklist, it will action on ANY URL containing that word.** You have been warned. Action is taken on the redirected URL, not the original. If someone posts a URL to myredirector.com which redirects to mysketchysite.com, you would want to configure mysketchysite.com in the blacklist, not myredirector.com.
+* url_blacklist - An array of URLs/partial URLs you want to action on. These are processed as regular expressions, so by default if you just specify a domain such as "google.com" it will action on **ANY URL containing that anywhere in it. If you add a word to the blacklist, it will action on ANY URL containing that word.** You have been warned.
 * blacklist_remove - Whether posts containing URLs matching the blacklist should be removed.
 * mark_as_spam - Whether removed posts should be marked as spam. Doing so will prevent future links using that URL from even being allowed.
 * blacklist_ban - Whether the user who posted the link should be banned.
