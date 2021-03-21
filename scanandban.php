@@ -35,7 +35,7 @@
 	// See https://www.rexegg.com/regex-quickstart.html for more info.
 	$url_blacklist = array(
 		"rokzfast.com",
-		"leafythings.com",
+		"^http[s]{0,}:\/\/[www\.]{0,}leafythings.com",
 	);
 	
 	// Whether the offending post should be removed.
