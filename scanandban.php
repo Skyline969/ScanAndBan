@@ -57,6 +57,22 @@
 	// ###### DO NOT EDIT ANYTHING BELOW THIS LINE ######
 	// ##################################################
 	
+	// Set our user agent string
+	$user_agent_string = $app_name . "/0.2";
+	
+	// Some URLs we will need
+	$access_token_url = "https://www.reddit.com/api/v1/access_token";
+	$oauth_url = "https://oauth.reddit.com";
+	
+	// First, let's get our access token which we will need to process any removals/bans
+	$oauth_fields = array(
+		"grant_type" => "password",
+		"username" => $mod_username,
+		"password" => $mod_password
+	);
+	
+	$oauth_token = array();
+	
 	/*
 	 *	This function will check the redirection of the passed-in URL.
 	 *	It attempts to follow the link 10 times before it gives up and
@@ -93,19 +109,95 @@
 		return $real_url;
 	}
 	
-	// Set our user agent string
-	$user_agent_string = $app_name . "/0.1";
-	
-	// Some URLs we will need
-	$access_token_url = "https://www.reddit.com/api/v1/access_token";
-	$oauth_url = "https://oauth.reddit.com";
-	
-	// First, let's get our access token which we will need to process any removals/bans
-	$oauth_fields = array(
-		"grant_type" => "password",
-		"username" => $mod_username,
-		"password" => $mod_password
-	);
+	function blacklist($post, $blacklisted, $debug)
+	{
+		// There's probably a better way to do this.
+		global $subreddit_fullname;
+		global $blacklist_remove;
+		global $mark_as_spam;
+		global $blacklist_ban;
+		global $ban_note;
+		global $user_agent_string;
+		global $oauth_url;
+		global $oauth_token;
+		
+		print "Post " . $post->url . " found to be or contain blacklisted URL " . $blacklisted . "\n";
+		
+		// Remove the post if configured
+		if ($blacklist_remove)
+		{
+			// These are the fields Reddit expects when removing a post
+			$remove_fields = array(
+				"id" => $post->name,
+				"spam" => $mark_as_spam
+			);
+			
+			$ch = curl_init($oauth_url . "/api/remove");
+			// We simply need to authenticate with our access token and we're good to go
+			curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+				"Authorization: bearer " . $oauth_token["access_token"]
+			));
+			curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+			curl_setopt($ch, CURLOPT_USERAGENT, $user_agent_string);
+			curl_setopt($ch, CURLOPT_POST, 1);
+			curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($remove_fields));
+			curl_setopt($ch, CURLOPT_VERBOSE, $debug);
+			
+			$response = curl_exec($ch);
+			curl_close($ch);
+			
+			// Reddit returns an empty JSON string on success
+			if ($response == "{}")
+				print "Post " . $post->permalink . " successfully removed.\n";
+			else
+				print "WARNING: Post " . $post->permalink . " could not be removed! Response: " . $response . "\n";
+		}
+		
+		// Ban the user if configured
+		if ($blacklist_ban)
+		{
+			// This is the info Reddit expects when banning someone
+			$ban_fields = array(
+				"action" => "add",
+				"container" => $subreddit_fullname,
+				"type" => "banned",
+				"name" => $post->author,
+				"note" => $ban_note,
+				"id" => "#banned",
+				"r" => $post->subreddit
+			);
+			
+			$ban_field_string = http_build_query($ban_fields);
+			
+			$ch = curl_init($oauth_url . "/api/friend");
+			// We simply need to authenticate with our access token and we're good to go
+			curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+				"Authorization: bearer " . $oauth_token["access_token"]
+			));
+			curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+			curl_setopt($ch, CURLOPT_USERAGENT, $user_agent_string);
+			curl_setopt($ch, CURLOPT_POST, 1);
+			curl_setopt($ch, CURLOPT_POSTFIELDS, $ban_field_string);
+			curl_setopt($ch, CURLOPT_VERBOSE, $debug);
+			
+			$response = curl_exec($ch);
+			curl_close($ch);
+			
+			// Parse the result of the ban
+			if ($ban_result = json_decode($response, true))
+			{
+				if ($ban_result["success"])
+					print "User " . $post->author . " successfully banned.\n";
+				else
+				{
+					print "WARNING: User " . $post->author . " could not be banned. Response:\n";
+					print_r($ban_result);
+				}
+			}
+			else
+				print "WARNING: Post " . $post->author . " could not be banned! Response: " . $response . "\n";
+		}
+	}
 	
 	$ch = curl_init($access_token_url);
 	// We also need to authorize using our app
@@ -125,7 +217,7 @@
 	{
 		// Then, let's get data from reddit. Last 100 posts should be fine.
 		// No authorization needed here since we're performing a read-only action.
-		$ch = curl_init("https://www.reddit.com/r/" . $subreddit ."/new/.json?count=100");
+		$ch = curl_init("https://www.reddit.com/r/" . $subreddit ."/new/.json?count=10");
 		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 		curl_setopt($ch, CURLOPT_VERBOSE, $debug);
 		// Set the useragent, otherwise Reddit gets mad.
@@ -149,93 +241,56 @@
 			// Process the redirect from the post's URL
 			$redirect = check_redirect($post->url, $debug);
 			
-			if ($verbose)
-				print $post->permalink . " has URL " . $post->url . " which redirects to " . $redirect . "\n";
-			
-			// Run the redirected URL through our list of blacklisted URLs
-			$blacklisted = false;
-			foreach($url_blacklist as $bl)
-				if (preg_match("/" . $bl . "/", $redirect))
-					$blacklisted = $bl;
-			
-			if ($blacklisted)
+			// Check if the URL is a self post
+			if (preg_match("/^http[s]{0,1}\:\/\/(www\.){0,1}reddit\.com\/r\//", $redirect))
 			{
-				print "Post " . $post->url . " found to be blacklisted URL " . $blacklisted . "\n";
-				
-				// Remove the post if configured
-				if ($blacklist_remove)
+				print $redirect . " is a reddit URL - scanning\n";
+				// Get the content of the self post in JSON format
+				if ($redirect_json = json_decode(file_get_contents($redirect . "/.json"), true))
 				{
-					// These are the fields Reddit expects when removing a post
-					$remove_fields = array(
-						"id" => $post->name,
-						"spam" => $mark_as_spam
-					);
+					if ($verbose)
+						print $redirect . " contains content:\n" . $redirect_json[0]["data"]["children"][0]["data"]["selftext"] . "\n";
 					
-					$ch = curl_init($oauth_url . "/api/remove");
-					// We simply need to authenticate with our access token and we're good to go
-					curl_setopt($ch, CURLOPT_HTTPHEADER, array(
-						"Authorization: bearer " . $oauth_token["access_token"]
-					));
-					curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-					curl_setopt($ch, CURLOPT_USERAGENT, $user_agent_string);
-					curl_setopt($ch, CURLOPT_POST, 1);
-					curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($remove_fields));
-					curl_setopt($ch, CURLOPT_VERBOSE, $debug);
-					
-					$response = curl_exec($ch);
-					curl_close($ch);
-					
-					// Reddit returns an empty JSON string on success
-					if ($response == "{}")
-						print "Post " . $post->permalink . " successfully removed.\n";
-					else
-						print "WARNING: Post " . $post->permalink . " could not be removed! Response: " . $response . "\n";
-				}
-				
-				// Ban the user if configured
-				if ($blacklist_ban)
-				{
-					// This is the info Reddit expects when banning someone
-					$ban_fields = array(
-						"action" => "add",
-						"container" => $subreddit_fullname,
-						"type" => "banned",
-						"name" => $post->author,
-						"note" => $ban_note,
-						"id" => "#banned",
-						"r" => $post->subreddit
-					);
-					
-					$ban_field_string = http_build_query($ban_fields);
-					
-					$ch = curl_init($oauth_url . "/api/friend");
-					// We simply need to authenticate with our access token and we're good to go
-					curl_setopt($ch, CURLOPT_HTTPHEADER, array(
-						"Authorization: bearer " . $oauth_token["access_token"]
-					));
-					curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-					curl_setopt($ch, CURLOPT_USERAGENT, $user_agent_string);
-					curl_setopt($ch, CURLOPT_POST, 1);
-					curl_setopt($ch, CURLOPT_POSTFIELDS, $ban_field_string);
-					curl_setopt($ch, CURLOPT_VERBOSE, $debug);
-					
-					$response = curl_exec($ch);
-					curl_close($ch);
-					
-					// Parse the result of the ban
-					if ($ban_result = json_decode($response, true))
+					// Get all URLs in the selftext of the post
+					preg_match_all('#\bhttps?://[^,\s()<>]+(?:\([\w\d]+\)|([^,[:punct:]\s]|/))#', $redirect_json[0]["data"]["children"][0]["data"]["selftext"], $url_match);
+					foreach($url_match as $url)
 					{
-						if ($ban_result["success"])
-							print "User " . $post->author . " successfully banned.\n";
-						else
+						// Only check if we actually got something
+						if (!empty($url))
 						{
-							print "WARNING: User " . $post->author . " could not be banned. Response:\n";
-							print_r($ban_result);
+							// Check if URL redirects to blacklisted domain
+							$blacklisted = false;
+							foreach($url_blacklist as $bl)
+							{
+								$self_bl = check_redirect($url[0], $debug);
+								if (preg_match("/" . $bl . "/", $self_bl))
+									$blacklisted = $self_bl;
+							}
+							
+							// Kill the post if a URL in the post is blacklisted
+							if ($blacklisted)
+								blacklist($post, $self_bl, $debug);
 						}
 					}
-					else
-						print "WARNING: Post " . $post->author . " could not be banned! Response: " . $response . "\n";
 				}
+				else
+					print "WARNING: Could not get JSON data for " . $redirect . "\n";
+			}
+			else
+			{
+				// If the post is not a self post, check the redirected URL
+				if ($verbose)
+					print $post->permalink . " has URL " . $post->url . " which redirects to " . $redirect . "\n";
+				
+				// Run the redirected URL through our list of blacklisted URLs
+				$blacklisted = false;
+				foreach($url_blacklist as $bl)
+					if (preg_match("/" . $bl . "/", $redirect))
+						$blacklisted = $bl;
+				
+				// Kill the post if the redirected URL is blacklisted
+				if ($blacklisted)
+					blacklist($post, $bl, $debug);
 			}
 		}
 	
