@@ -52,6 +52,9 @@
 	// Note that this does nothing if blacklist_ban is false.
 	$ban_note = "Spamming is not welcome here.";
 	
+	// Whether ScanAndBan should rescan older posts or just skip them
+	$rescan = false;
+	
 	// ##################################################
 	// ######        CONFIGURATION COMPLETE        ######
 	// ###### DO NOT EDIT ANYTHING BELOW THIS LINE ######
@@ -110,10 +113,9 @@
 	}
 	
 	/*
-	 *	This function will blacklist the passed-in post.
-	 *	$post:		The post object
-	 *	$blacklisted:	The URL detected as part of your configured blacklist
-	 *	$debug:		Whether to display extra debug information
+	 *	This function will check the redirection of the passed-in URL.
+	 *	It attempts to follow the link 10 times before it gives up and
+	 *	returns whatever link it is currently on.
 	 */
 	function blacklist($post, $blacklisted, $debug)
 	{
@@ -221,6 +223,9 @@
 	// No sense in continuing if we cannot authenticate
 	if ($oauth_token = json_decode($response, true))
 	{
+		// Get the timestamp of the last post we scanned (this will default to 0 if the file is missing)
+		$last_post = intval(@file_get_contents(__DIR__ . "/snb_lastpost.txt"));
+		
 		// Then, let's get data from reddit. Last 100 posts should be fine.
 		// No authorization needed here since we're performing a read-only action.
 		$ch = curl_init("https://www.reddit.com/r/" . $subreddit ."/new/.json?count=10");
@@ -244,66 +249,75 @@
 		// Now let's start scanning URLs
 		foreach($post_ary as $post)
 		{
-			// Process the redirect from the post's URL
-			$redirect = check_redirect($post->url, $debug);
-			
-			// Check if the URL is a self post
-			if (preg_match("/^http[s]{0,1}\:\/\/(www\.){0,1}reddit\.com\/r\//", $redirect))
+			if ($post->created_utc > $last_post || $rescan)
 			{
-				print $redirect . " is a reddit URL - scanning\n";
-				// Get the content of the self post in JSON format
-				if ($redirect_json = json_decode(file_get_contents($redirect . "/.json"), true))
+				// Set the most recent post to this post's timestamp
+				$last_post = $post->created_utc;
+				
+				// Process the redirect from the post's URL
+				$redirect = check_redirect($post->url, $debug);
+				
+				// Check if the URL is a self post
+				if (preg_match("/^http[s]{0,1}\:\/\/(www\.){0,1}reddit\.com\/r\//", $redirect))
 				{
 					if ($verbose)
-						print $redirect . " contains content:\n" . $redirect_json[0]["data"]["children"][0]["data"]["selftext"] . "\n";
-					
-					// Get all URLs in the selftext of the post
-					preg_match_all('#\bhttps?://[^,\s()<>]+(?:\([\w\d]+\)|([^,[:punct:]\s]|/))#', $redirect_json[0]["data"]["children"][0]["data"]["selftext"], $url_match);
-					foreach($url_match as $url)
+						print $redirect . " is a reddit URL - scanning\n";
+					// Get the content of the self post in JSON format
+					if ($redirect_json = json_decode(file_get_contents($redirect . "/.json"), true))
 					{
-						// Only check if we actually got something
-						if (!empty($url))
+						if ($verbose)
+							print $redirect . " contains content:\n" . $redirect_json[0]["data"]["children"][0]["data"]["selftext"] . "\n";
+						
+						// Get all URLs in the selftext of the post
+						preg_match_all('#\bhttps?://[^,\s()<>]+(?:\([\w\d]+\)|([^,[:punct:]\s]|/))#', $redirect_json[0]["data"]["children"][0]["data"]["selftext"], $url_match);
+						foreach($url_match as $url)
 						{
-							// Check if URL redirects to blacklisted domain
-							$blacklisted = false;
-							foreach($url_blacklist as $bl)
+							// Only check if we actually got something
+							if (!empty($url))
 							{
-								$self_bl = check_redirect($url[0], $debug);
-								if (preg_match("/" . $bl . "/", $self_bl))
-									$blacklisted = $self_bl;
+								// Check if URL redirects to blacklisted domain
+								$blacklisted = false;
+								foreach($url_blacklist as $bl)
+								{
+									$self_bl = check_redirect($url[0], $debug);
+									if (preg_match("/" . $bl . "/", $self_bl))
+										$blacklisted = $self_bl;
+								}
+								
+								// Kill the post if a URL in the post is blacklisted
+								if ($blacklisted)
+									blacklist($post, $self_bl, $debug);
 							}
-							
-							// Kill the post if a URL in the post is blacklisted
-							if ($blacklisted)
-								blacklist($post, $self_bl, $debug);
 						}
 					}
+					else
+						print "WARNING: Could not get JSON data for " . $redirect . "\n";
 				}
 				else
-					print "WARNING: Could not get JSON data for " . $redirect . "\n";
-			}
-			else
-			{
-				// If the post is not a self post, check the redirected URL
-				if ($verbose)
-					print $post->permalink . " has URL " . $post->url . " which redirects to " . $redirect . "\n";
-				
-				// Run the redirected URL through our list of blacklisted URLs
-				$blacklisted = false;
-				foreach($url_blacklist as $bl)
-					if (preg_match("/" . $bl . "/", $redirect))
-						$blacklisted = $bl;
-				
-				// Kill the post if the redirected URL is blacklisted
-				if ($blacklisted)
-					blacklist($post, $bl, $debug);
+				{
+					// If the post is not a self post, check the redirected URL
+					if ($verbose)
+						print $post->permalink . " has URL " . $post->url . " which redirects to " . $redirect . "\n";
+					
+					// Run the redirected URL through our list of blacklisted URLs
+					$blacklisted = false;
+					foreach($url_blacklist as $bl)
+						if (preg_match("/" . $bl . "/", $redirect))
+							$blacklisted = $bl;
+					
+					// Kill the post if the redirected URL is blacklisted
+					if ($blacklisted)
+						blacklist($post, $bl, $debug);
+				}
 			}
 		}
-	
+		
+		// Write the timestamp of our last post
+		file_put_contents(__DIR__ . "/snb_lastpost.txt", $last_post);
 	}
 	else
 		print "OAuth authorization failed! Response: " . $response . "\n";
 	
-	if ($verbose)
+	if ($debug)
 		print "Done.\n";
 ?>
