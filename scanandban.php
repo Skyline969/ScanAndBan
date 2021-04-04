@@ -109,6 +109,12 @@
 		return $real_url;
 	}
 	
+	/*
+	 *	This function will blacklist the passed-in post.
+	 *	$post:		The post object
+	 *	$blacklisted:	The URL detected as part of your configured blacklist
+	 *	$debug:		Whether to display extra debug information
+	 */
 	function blacklist($post, $blacklisted, $debug)
 	{
 		// There's probably a better way to do this.
